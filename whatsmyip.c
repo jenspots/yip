@@ -11,15 +11,34 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <pthread.h>
 
 #define PORT 80
 
+void* handle_request(void * arg)
+{
+    int socket_identifier, handler;
+    char *ip;
+    struct sockaddr_in client;
+    socklen_t address_len = sizeof(client);
+
+    /* The void pointer contains the original socket number. */
+    socket_identifier = * (int*) arg;
+
+    /* Respond with the address and close the handling socket. */
+    handler = accept(socket_identifier, (struct sockaddr *) &client, &address_len);
+    ip = inet_ntoa(client.sin_addr);
+    write(handler, "HTTP/1.1 200 OK\n\n", 16);
+    write(handler, "Content-length: 9\n\n", 19);
+    write(handler, ip, strlen(ip));
+    close(handler);
+}
+
 int main(int argc, char ** argv)
 {
-    socklen_t buffer[INET_ADDRSTRLEN];
-    char *ip;
-    int socket_identifier, handler;
-    struct sockaddr_in server, client;
+    int socket_identifier;
+    struct sockaddr_in server;
+    pthread_t thread_id;
 
     /* Configure the socket. */
     server.sin_family = AF_INET;
@@ -32,12 +51,8 @@ int main(int argc, char ** argv)
     listen(socket_identifier, 1);
 
     /* Infinitely respond with the IP address. */
-    while(1) {
-        handler = accept(socket_identifier, (struct sockaddr *) &client, buffer);
-        ip = inet_ntoa(client.sin_addr);
-        write(handler, "HTTP/1.1 200 OK\n\n", 16);
-        write(handler, "Content-length: 9\n\n", 19);
-        write(handler, ip, strlen(ip));
-        close(handler);
+    while (1) {
+        pthread_create(&thread_id, NULL, handle_request, &socket_identifier);
+        pthread_join(thread_id, NULL);
     }
 }
