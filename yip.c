@@ -15,6 +15,7 @@
 #include <stdnoreturn.h>
 #include <getopt.h>
 #include <stdio.h>
+#include <time.h>
 
 /* Style codes to format terminal output. */
 #define ANSI_STYLE_BOLD    "\033[1m"
@@ -22,10 +23,10 @@
 #define BOLD(x) ANSI_STYLE_BOLD""x""ANSI_STYLE_RESET
 
 #define PORT 80
+#define THREAD_COUNT_DEFAULT 1
 
 /* Global flag set by the user at runtime. */
 static int verbose_flag = 0;
-static int log_flag = 0;
 
 /* Message displayed as help page. */
 static char* help_message =
@@ -36,8 +37,7 @@ static char* help_message =
         BOLD("OPTIONS\n")
         "  -h --help\t\tDisplay this help page.\n"
         "  -c --count <u_int>\tSpecify number of threads.\n"
-        "  -v --verbose\t\tBe more verbose.\n"
-        "  -l --log\t\tLog addresses to stdout.\n";
+        "  -v --verbose\t\tBe more verbose.\n";
 
 /**
  * Function that handles incoming requests until the end of time, or when the
@@ -50,6 +50,7 @@ noreturn void* handle_request(void * arg)
     int socket_identifier, handler;
     char *ip;
     struct sockaddr_in client;
+    time_t current_time;
 
     /* The void pointer contains the original socket number. */
     socket_identifier = * (int*) arg;
@@ -66,15 +67,17 @@ noreturn void* handle_request(void * arg)
         write(handler, ip, strlen(ip));
         close(handler);
 
-        if (log_flag) {
-            printf("Served client: %s\n", ip);
+        /* Log IP address and time to stdout. */
+        if (verbose_flag) {
+            current_time = time(NULL);
+            printf("%s\t%s", ip, ctime(&current_time));
         }
     }
 }
 
 int main(int argc, char ** argv)
 {
-    int socket_identifier, thread_count;
+    int socket_identifier, thread_count = THREAD_COUNT_DEFAULT, error;
     struct sockaddr_in server;
     pthread_t thread_id;
 
@@ -83,7 +86,6 @@ int main(int argc, char ** argv)
     struct option long_options[] = {
         {"verbose", no_argument,       &verbose_flag, 1  },
         {"count",   required_argument, NULL,          'c'},
-        {"log",     no_argument,       &log_flag,     1  },
         {NULL,      0,                 NULL,          0  }
     };
 
@@ -94,10 +96,6 @@ int main(int argc, char ** argv)
                 goto exit_while_loop;
             case 'c':
                 thread_count = atoi(optarg);
-                printf("Assigning %d worker threads\n", thread_count);
-                break;
-            case 'l':
-                printf("Logging users\n");
                 break;
             case 'h':
                 printf("%s", help_message);
@@ -109,6 +107,10 @@ int main(int argc, char ** argv)
     }
     exit_while_loop:
 
+    if (verbose_flag) {
+        printf("Thread count: %d\n", thread_count);
+    }
+
     /* Configure the socket. */
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -116,12 +118,26 @@ int main(int argc, char ** argv)
 
     /* Create the socket, bind it, and start listening. */
     socket_identifier = socket(PF_INET, SOCK_STREAM, 0);
-    bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server));
-    listen(socket_identifier, 1);
+    if (socket_identifier == -1) {
+        exit(-1);
+    }
+
+    error = bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server));
+    if (error == -1) {
+        exit(-1);
+    }
+
+    error = listen(socket_identifier, 1);
+    if (error == -1) {
+        exit(-1);
+    }
 
     /* Spawn worker threads. The current thread is the zeroth, so i = 1. */
     for (int i = 1; i < thread_count; ++i) {
-        pthread_create(&thread_id, NULL, handle_request, &socket_identifier);
+        error = pthread_create(&thread_id, NULL, handle_request, &socket_identifier);
+        if (error != 0) {
+            exit(-1);
+        }
     }
 
     /* If the main thread exits, the program exits as a whole. Instead of

@@ -9,7 +9,6 @@ OPTIONS
   -h --help             Display this help page.
   -c --count <u_int>    Specify number of threads.
   -v --verbose          Be more verbose.
-  -l --log              Log addresses to stdout.
 ```
 
 ### Motivation
