@@ -1,5 +1,5 @@
 /*
- * Simple web server that responds with the client's IP address.
+ * yip: Simple web server that responds with the client's IP address.
  *
  * Copyright (C) 2022 Jens Pots.
  * License: AGPL-3.0-only.
@@ -29,7 +29,7 @@ static int log_flag = 0;
 
 /* Message displayed as help page. */
 static char* help_message =
-        "Lightweight, multi-threaded web server which echoes the client's IP address.\n"
+        "yip: Lightweight, multi-threaded web server which echoes the client's IP address.\n"
         "Copyright (c) by Jens Pots\n"
         "Licensed under AGPL-3.0-only\n"
         "\n"
