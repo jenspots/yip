@@ -62,9 +62,16 @@ noreturn void* handle_request(void * arg)
     while (1) {
         handler = accept(socket_identifier, (struct sockaddr *) &client, &address_len);
         ip = inet_ntoa(client.sin_addr);
-        write(handler, "HTTP/1.1 200 OK\n\n", 16);
-        write(handler, "Content-length: 9\n\n", 19);
+        write(handler, "HTTP/1.1 200 OK\nContent-length: 9\n\n", 35);
         write(handler, ip, strlen(ip));
+
+        /* TCP: FIN message. */
+        shutdown(handler, SHUT_WR);
+
+        /* TCP: Receive acknowledge FIN. */
+        recv(handler, NULL, 0, 0);
+
+        /* Close the TCP connection. */
         close(handler);
 
         /* Log IP address and time to stdout. */
@@ -77,7 +84,7 @@ noreturn void* handle_request(void * arg)
 
 int main(int argc, char ** argv)
 {
-    int socket_identifier, thread_count = THREAD_COUNT_DEFAULT, error;
+    int socket_identifier, thread_count = THREAD_COUNT_DEFAULT, error, done;
     struct sockaddr_in server;
     pthread_t thread_id;
 
@@ -90,10 +97,12 @@ int main(int argc, char ** argv)
     };
 
     /* Parse runtime arguments. */
-    while (1) {
+    done = 0;
+    while (!done) {
         switch (getopt_long(argc, argv, options, long_options, NULL)) {
             case -1:
-                goto exit_while_loop;
+                done = 1;
+                break;
             case 'c':
                 thread_count = atoi(optarg);
                 break;
@@ -105,7 +114,6 @@ int main(int argc, char ** argv)
                 exit(-1);
         };
     }
-    exit_while_loop:
 
     if (verbose_flag) {
         printf("Thread count: %d\n", thread_count);
