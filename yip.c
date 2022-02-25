@@ -16,6 +16,7 @@
 #include <getopt.h>
 #include <stdio.h>
 #include <time.h>
+#include <netinet/tcp.h>
 
 /* Style codes to format terminal output. */
 #define ANSI_STYLE_BOLD    "\033[1m"
@@ -24,6 +25,8 @@
 
 #define PORT 80
 #define THREAD_COUNT_DEFAULT 1
+#define BACKLOG_SIZE 100
+#define CACHE_SIZE 256
 
 /* Global flag set by the user at runtime. */
 static int verbose_flag = 0;
@@ -51,6 +54,9 @@ noreturn void* handle_request(void * arg)
     char *ip;
     struct sockaddr_in client;
     time_t current_time;
+    char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nContent-length: 9\n\n";
+    char buffer;
+    long result;
 
     /* The void pointer contains the original socket number. */
     socket_identifier = * (int*) arg;
@@ -61,18 +67,22 @@ noreturn void* handle_request(void * arg)
     /* Respond with the address and close the handling socket. */
     while (1) {
         handler = accept(socket_identifier, (struct sockaddr *) &client, &address_len);
+        setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, NULL, 0);
+
+        /* Craft and write the message. */
         ip = inet_ntoa(client.sin_addr);
-        write(handler, "HTTP/1.1 200 OK\nContent-length: 9\n\n", 35);
-        write(handler, ip, strlen(ip));
+        strcpy(cache + 35, ip);
+        read(handler, &buffer, 1);
+        write(handler, cache, strlen(cache));
 
         /* TCP: FIN message. */
-        shutdown(handler, SHUT_WR);
-
-        /* TCP: Receive acknowledge FIN. */
-        recv(handler, NULL, 0, 0);
+        shutdown(handler, SHUT_RDWR);
 
         /* Close the TCP connection. */
-        close(handler);
+        result = close(handler);
+        if (result == -1) {
+            exit(-1);
+        }
 
         /* Log IP address and time to stdout. */
         if (verbose_flag) {
@@ -135,7 +145,7 @@ int main(int argc, char ** argv)
         exit(-1);
     }
 
-    error = listen(socket_identifier, 1);
+    error = listen(socket_identifier, BACKLOG_SIZE);
     if (error == -1) {
         exit(-1);
     }
