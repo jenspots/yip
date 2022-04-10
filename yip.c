@@ -55,8 +55,8 @@ noreturn void* handle_request(void * arg)
     struct sockaddr_in client;
     time_t current_time;
     char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nContent-length: 9\n\n";
-    char buffer;
     long result;
+    unsigned long ip_length;
 
     /* The void pointer contains the original socket number. */
     socket_identifier = * (int*) arg;
@@ -71,8 +71,21 @@ noreturn void* handle_request(void * arg)
 
         /* Craft and write the message. */
         ip = inet_ntoa(client.sin_addr);
-        strcpy(cache + 35, ip);
-        read(handler, &buffer, 1);
+        ip_length = strlen(ip);
+        sprintf(cache + 32, "%lu", ip_length);
+
+        /* The IP address is either [0, 10] digits long, or [10, 100]. */
+        if (ip_length < 10) {
+            *(cache + 33) = '\n';
+            *(cache + 34) = '\n';
+            strcpy(cache + 35, ip);
+        } else {
+            *(cache + 34) = '\n';
+            *(cache + 35) = '\n';
+            strcpy(cache + 36, ip);
+        }
+
+        /* Write data to the socket. */
         write(handler, cache, strlen(cache));
 
         /* TCP: FIN message. */
