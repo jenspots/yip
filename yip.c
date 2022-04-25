@@ -56,7 +56,7 @@ noreturn void* handle_request(void * arg)
     time_t current_time;
     char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nContent-length: 9\n\n";
     long result;
-    unsigned long ip_length;
+    unsigned long ip_length, amount_sent, amount_to_send;
 
     /* The void pointer contains the original socket number. */
     socket_identifier = * (int*) arg;
@@ -86,7 +86,11 @@ noreturn void* handle_request(void * arg)
         }
 
         /* Write data to the socket. */
-        write(handler, cache, strlen(cache));
+        amount_sent = 0;
+        amount_to_send = ip_length + 35;
+        while (amount_sent < amount_to_send) {
+            amount_sent += write(handler, cache + amount_sent, amount_to_send - amount_sent);
+        }
 
         /* TCP: FIN message. */
         shutdown(handler, SHUT_RDWR);
@@ -152,6 +156,9 @@ int main(int argc, char ** argv)
     if (socket_identifier == -1) {
         exit(-1);
     }
+
+    int optval = 1;
+    setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
 
     error = bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server));
     if (error == -1) {
