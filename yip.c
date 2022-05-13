@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <netinet/tcp.h>
+#include <errno.h>
 
 /* Style codes to format terminal output. */
 #define ANSI_STYLE_BOLD    "\033[1m"
@@ -51,12 +52,12 @@ static char* help_message =
 noreturn void* handle_request(void * arg)
 {
     int socket_identifier, handler;
-    char *ip;
+    char ip[INET6_ADDRSTRLEN];
     struct sockaddr_in client;
     time_t current_time;
-    char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nContent-length: 9\n\n";
+    char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nConnection: close\nContent-length: ";
     long result;
-    unsigned long ip_length, amount_sent, amount_to_send;
+    unsigned long ip_length, amount_sent, amount_to_send, offset = strlen(cache);
 
     /* The void pointer contains the original socket number. */
     socket_identifier = * (int*) arg;
@@ -67,41 +68,72 @@ noreturn void* handle_request(void * arg)
     /* Respond with the address and close the handling socket. */
     while (1) {
         handler = accept(socket_identifier, (struct sockaddr *) &client, &address_len);
-        setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, NULL, 0);
+        if (handler == -1) {
+            perror("ERROR");
+            continue;
+        }
+
+        result = 1;
+        setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, &result, sizeof(long));
 
         /* Craft and write the message. */
-        ip = inet_ntoa(client.sin_addr);
-        ip_length = strlen(ip);
-        sprintf(cache + 32, "%lu", ip_length);
-
-        /* The IP address is either [0, 10] digits long, or [10, 100]. */
-        if (ip_length < 10) {
-            *(cache + 33) = '\n';
-            *(cache + 34) = '\n';
-            strcpy(cache + 35, ip);
+        if (client.sin_family == AF_INET) {
+            inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
         } else {
-            *(cache + 34) = '\n';
-            *(cache + 35) = '\n';
-            strcpy(cache + 36, ip);
+            inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
+        }
+
+        ip_length = strlen(ip);
+        sprintf(cache + offset, "%lu", ip_length);
+
+        /* The IP address is either [0, 9] digits long, or [10, 100]. */
+        if (ip_length < 10) {
+            *(cache + offset + 1) = '\n';
+            *(cache + offset + 2) = '\n';
+            strcpy(cache + offset + 3, ip);
+            *(cache + offset + 3 + ip_length) = '\0';
+        } else {
+            *(cache + offset + 2) = '\n';
+            *(cache + offset + 3) = '\n';
+            strcpy(cache + offset + 4, ip);
+            *(cache + offset + 4 + ip_length) = '\0';
         }
 
         /* Write data to the socket. */
         amount_sent = 0;
-        amount_to_send = ip_length + 35;
+        amount_to_send = strlen(cache);
         while (amount_sent < amount_to_send) {
-            amount_sent += write(handler, cache + amount_sent, amount_to_send - amount_sent);
+            result = send(handler, cache + amount_sent, amount_to_send - amount_sent, 0);
+            if (result != -1) {
+                amount_sent += result;
+            } else {
+                perror("ERROR");
+                exit(-1); // TODO
+            }
         }
 
-        /* TCP: FIN message. */
-        shutdown(handler, SHUT_RDWR);
+        /* Do not permit any new data to be send from either side. */
+        result = shutdown(handler, SHUT_RDWR);
+        if (result == -1) {
+            switch(errno) {
+                case ENOTCONN: {
+                    break;
+                }
+                default: {
+                    perror("ERROR");
+                    exit(-1); // TODO
+                }
+            }
+        }
 
-        /* Close the TCP connection. */
+        /* Close the TCP connection and corresponding socket. */
         result = close(handler);
         if (result == -1) {
-            exit(-1);
+            perror("ERROR");
+            exit(-1); // TODO
         }
 
-        /* Log IP address and time to stdout. */
+        /* Log IP address and time to stdout, if desired. */
         if (verbose_flag) {
             current_time = time(NULL);
             printf("%s\t%s", ip, ctime(&current_time));
@@ -139,7 +171,7 @@ int main(int argc, char ** argv)
             case '?':
                 printf("Unknown parameter\n");
                 exit(-1);
-        };
+        }
     }
 
     if (verbose_flag) {
@@ -154,20 +186,24 @@ int main(int argc, char ** argv)
     /* Create the socket, bind it, and start listening. */
     socket_identifier = socket(PF_INET, SOCK_STREAM, 0);
     if (socket_identifier == -1) {
-        exit(-1);
+        perror("ERROR");
+        exit(-1); // TODO
     }
 
     int optval = 1;
-    setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+    setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEADDR & SO_REUSEPORT, &optval, sizeof(int));
+    setsockopt(socket_identifier, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(int));
 
     error = bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server));
     if (error == -1) {
-        exit(-1);
+        perror("ERROR");
+        exit(-1); // TODO
     }
 
     error = listen(socket_identifier, BACKLOG_SIZE);
     if (error == -1) {
-        exit(-1);
+        perror("ERROR");
+        exit(-1); // TODO
     }
 
     /* Spawn worker threads. The current thread is the zeroth, so i = 1. */
