@@ -2,11 +2,12 @@
 
 ### About
 
-In here you'll find a high performance, multithreaded HTTP server that only knows how to do one thing: return the client's IP address. It is extremely lightweight, and should be able to handle and immense amount of traffic when completed.
+In here you'll find a high performance, multithreaded HTTP server that only knows how to do one thing: return the client's IP address. It is extremely lightweight, and should be able to handle an immense amount of traffic when completed.
 
 ```
 OPTIONS
   -h --help             Display this help page.
+  -p --port  <u_int>    Choose port number.
   -c --count <u_int>    Specify number of threads.
   -v --verbose          Be more verbose.
 ```
@@ -22,3 +23,8 @@ Some things that still need to be done.
 - [ ] Error handling
 - [ ] Code cleanup
 - [ ] Make the UX a bit nicer
+- [ ] Inspect performance scaling when thread count increases
+
+### Benchmarks
+
+TODO
