@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <netinet/tcp.h>
+#include <errno.h>
 
 /* Style codes to format terminal output. */
 #define ANSI_STYLE_BOLD    "\033[1m"
@@ -43,6 +44,19 @@ static char* help_message =
         "  -p --port  <u_int>\tChoose port number.\n"
         "  -c --count <u_int>\tSpecify number of threads.\n"
         "  -v --verbose\t\tBe more verbose.\n";
+
+/**
+ * If the argument indicates an error, the function will print to stdout and
+ * exit the program using the appropriate error code.
+ * @param error `-1` on error, anything else on success.
+ */
+void try_or_exit(int error)
+{
+    if (error == -1) {
+        perror("ERROR");
+        exit(errno);
+    }
+}
 
 /**
  * Function that handles incoming requests until the end of time, or when the
@@ -178,36 +192,21 @@ int main(int argc, char ** argv)
 
     /* Create the socket. */
     socket_identifier = socket(PF_INET, SOCK_STREAM, 0);
-    if (socket_identifier == -1) {
-        perror("ERROR");
-        exit(-1); // TODO
-    }
+    try_or_exit(socket_identifier);
 
     /* Allow reusing of socket across threads. */
     setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEPORT, &option_value, sizeof(int));
     setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEADDR, &option_value, sizeof(int));
 
     /* Bind to the socket. */
-    error = bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server));
-    if (error == -1) {
-        perror("ERROR");
-        exit(-1); // TODO
-    }
+    try_or_exit(bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server)));
 
     /* Set the program to start listening. */
-    error = listen(socket_identifier, BACKLOG_SIZE);
-    if (error == -1) {
-        perror("ERROR");
-        exit(-1); // TODO
-    }
+    try_or_exit(listen(socket_identifier, BACKLOG_SIZE));
 
     /* Spawn worker threads. The current thread is the zeroth, so i = 1. */
     for (int i = 1; i < thread_count; ++i) {
-        error = pthread_create(&thread_id, NULL, handle_request, &socket_identifier);
-        if (error != 0) {
-            perror("ERROR");
-            exit(-1);
-        }
+        try_or_exit(pthread_create(&thread_id, NULL, handle_request, &socket_identifier));
     }
 
     /* If the main thread exits, the program exits as a whole. Instead of
