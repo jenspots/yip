@@ -66,8 +66,10 @@ void try_or_exit(int error)
  */
 noreturn void* handle_request(void * arg)
 {
+    struct tm * time_info;
     int socket_identifier, handler, option_value = 1;
     char ip[INET6_ADDRSTRLEN];
+    char datetime[CACHE_SIZE];
     struct sockaddr_in client;
     time_t current_time;
     char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nConnection: close\nContent-length: ";
@@ -137,15 +139,17 @@ noreturn void* handle_request(void * arg)
 
         /* Log IP address and time to stdout, if desired. */
         if (verbose_flag) {
-            current_time = time(NULL);
-            printf("%s\t%s", ip, ctime(&current_time));
+            time(&current_time);
+            time_info = localtime(&current_time);
+            strftime(datetime,80,"%FT%T%z", time_info); // ISO 8601
+            printf("%s\t%s\n", datetime, ip);
         }
     }
 }
 
 int main(int argc, char ** argv)
 {
-    int socket_identifier, thread_count = THREAD_COUNT_DEFAULT, error, done;
+    int socket_identifier, thread_count = THREAD_COUNT_DEFAULT, done;
     struct sockaddr_in server;
     pthread_t thread_id;
     int option_value = 1;
@@ -182,7 +186,7 @@ int main(int argc, char ** argv)
     }
 
     if (verbose_flag) {
-        printf("Listening on port: %d\nThread count: %d\n", port, thread_count);
+        printf("Listening on port: %d\nThread count: %d\n\n", port, thread_count);
     }
 
     /* Configure the socket. */
