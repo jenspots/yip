@@ -152,7 +152,6 @@ int main(int argc, char ** argv)
     int socket_identifier, thread_count = THREAD_COUNT_DEFAULT, done;
     struct sockaddr_in server;
     pthread_t thread_id;
-    int option_value = 1;
 
     /* These values define which switches are legal. */
     char options[] = "c:hp:";
@@ -197,10 +196,6 @@ int main(int argc, char ** argv)
     /* Create the socket. */
     socket_identifier = socket(PF_INET, SOCK_STREAM, 0);
     try_or_exit(socket_identifier);
-
-    /* Allow reusing of socket across threads. */
-    setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEPORT, &option_value, sizeof(int));
-    setsockopt(socket_identifier, SOL_SOCKET, SO_REUSEADDR, &option_value, sizeof(int));
 
     /* Bind to the socket. */
     try_or_exit(bind(socket_identifier, (const struct sockaddr *) &server, sizeof(server)));
