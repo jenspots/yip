@@ -35,7 +35,8 @@ static int port = DEFAULT_PORT;
 
 /* Message displayed as help page. */
 static char* help_message =
-        "yip: Lightweight, multi-threaded web server which echoes the client's IP address.\n"
+        "yip: Lightweight, multi-threaded web server which echoes the client's "
+        "IP address.\n"
         "Copyright (c) by Jens Pots\n"
         "Licensed under AGPL-3.0-only\n"
         "\n"
@@ -67,7 +68,7 @@ void try_or_exit(int error)
 noreturn void* handle_request(void * arg)
 {
     struct tm * time_info;
-    int socket_identifier, handler, option_value = 1;
+    int socket_identifier, handler, option_value = 1, error_occurred;
     char ip[INET6_ADDRSTRLEN];
     char datetime[CACHE_SIZE];
     struct sockaddr_in client;
@@ -89,60 +90,64 @@ noreturn void* handle_request(void * arg)
     /* Respond with the address and close the handling socket. */
     while (1) {
         handler = accept(socket_identifier, (struct sockaddr *) &client, &address_len);
-        if (handler == -1) {
-            perror("ERROR");
-            continue;
-        }
+        if (handler > 0) {
+            error_occurred = 0;
 
-        /* Disable TCP_WAIT. */
-        setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, &option_value, sizeof(int));
+            /* Disable TCP_WAIT. */
+            setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, &option_value, sizeof(int));
 
-        /* Disable socket lingering, a.k.a. Nagle's Algorithm. */
-        setsockopt(handler, SOL_SOCKET, SO_LINGER, &linger_options, sizeof(linger_options));
+            /* Disable socket lingering, a.k.a. Nagle's Algorithm. */
+            setsockopt(handler, SOL_SOCKET, SO_LINGER, &linger_options, sizeof(linger_options));
 
-        /* Craft and write the message. */
-        if (client.sin_family == AF_INET) {
-            inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
-        } else {
-            inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
-        }
-
-        ip_length = strlen(ip);
-        sprintf(cache + offset, "%lu", ip_length);
-
-        /* If the IP address length contains two digits, we must move everything
-         * with one character to the right. This is represented using "shift" */
-        int shift = ip_length < 10 ? 0 : 1;
-        *(cache + offset + 1 + shift) = '\n';
-        *(cache + offset + 2 + shift) = '\n';
-        strcpy(cache + offset + 3 + shift, ip);
-        *(cache + offset + 3 + shift + ip_length) = '\0';
-
-        /* Write data to the socket. */
-        amount_sent = 0;
-        amount_to_send = strlen(cache);
-        while (amount_sent < amount_to_send) {
-            result = send(handler, cache + amount_sent, amount_to_send - amount_sent, 0);
-            if (result != -1) {
-                amount_sent += result;
+            /* Craft and write the message. */
+            if (client.sin_family == AF_INET) {
+                inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
             } else {
-                perror("ERROR");
-                continue;
+                inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
             }
-        }
 
-        /* Close the TCP connection and corresponding socket. */
-        result = close(handler);
-        if (result == -1) {
+            ip_length = strlen(ip);
+            sprintf(cache + offset, "%lu", ip_length);
+
+            /* If the IP address length contains two digits, we must move everything
+             * with one character to the right. This is represented using "shift" */
+            int shift = ip_length < 10 ? 0 : 1;
+            *(cache + offset + 1 + shift) = '\n';
+            *(cache + offset + 2 + shift) = '\n';
+            strcpy(cache + offset + 3 + shift, ip);
+            *(cache + offset + 3 + shift + ip_length) = '\0';
+
+            /* Write data to the socket. */
+            amount_sent = 0;
+            amount_to_send = strlen(cache);
+            while (amount_sent < amount_to_send) {
+                result = send(handler, cache + amount_sent, amount_to_send - amount_sent, 0);
+                if (result != -1) {
+                    amount_sent += result;
+                } else {
+                    error_occurred = 1;
+                    perror("ERROR");
+                    break;
+                }
+            }
+
+            /* Close the TCP connection and corresponding socket. */
+            result = close(handler); // TODO: this may block
+            if (result == -1) {
+                error_occurred = 1;
+                perror("ERROR");
+            }
+
+            /* Log IP address and time to stdout, if desired. */
+            if (verbose_flag) {
+                time(&current_time);
+                time_info = localtime(&current_time);
+                strftime(datetime, 80, "%FT%T%z", time_info); // ISO 8601
+                printf("%s\t%s\t%s\n", datetime, error_occurred ? "ERROR" : "OK\t", ip);
+            }
+
+        } else {
             perror("ERROR");
-        }
-
-        /* Log IP address and time to stdout, if desired. */
-        if (verbose_flag) {
-            time(&current_time);
-            time_info = localtime(&current_time);
-            strftime(datetime,80,"%FT%T%z", time_info); // ISO 8601
-            printf("%s\t%s\n", datetime, ip);
         }
     }
 }
