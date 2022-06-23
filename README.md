@@ -10,6 +10,7 @@ OPTIONS
   -p --port  <u_int>    Choose port number.
   -c --count <u_int>    Specify number of threads.
   -v --verbose          Be more verbose.
+  -f --forward          Use "X-Forwarded-For" header to determine IP.
 ```
 
 ### Motivation

@@ -18,33 +18,45 @@
 #include <time.h>
 #include <netinet/tcp.h>
 #include <errno.h>
+#include <regex.h>
 
 /* Style codes to format terminal output. */
 #define ANSI_STYLE_BOLD    "\033[1m"
 #define ANSI_STYLE_RESET   "\033[22m"
 #define BOLD(x) ANSI_STYLE_BOLD""x""ANSI_STYLE_RESET
 
+/* Parameters that change the way yip works, ever so slightly. */
 #define DEFAULT_PORT 80
 #define THREAD_COUNT_DEFAULT 1
 #define BACKLOG_SIZE 100
 #define CACHE_SIZE 256
+#define MESSAGE_BUFFER_SIZE 1024
 
 /* Global configuration set by the user at runtime. */
 static int verbose_flag = 0;
+static int forward_flag = 0;
 static int port = DEFAULT_PORT;
+
+/* This regular expression gets used to parse HTTP requests. */
+#define REGEX_HTTP_HEADER "\n[[:space:]]*X-Forwarded-For:[[:space:]]*([[:graph:]]+)[[:space:]]*\n"
+static regex_t header_regex;
 
 /* Message displayed as help page. */
 static char* help_message =
-        "yip: Lightweight, multi-threaded web server which echoes the client's "
-        "IP address.\n"
-        "Copyright (c) by Jens Pots\n"
+        BOLD("yip: Lightweight, multi-threaded web server which echoes the client's "
+        "IP address.\n")
+        "Copyright (c) by Jens Pots, 2022\n"
         "Licensed under AGPL-3.0-only\n"
         "\n"
         BOLD("OPTIONS\n")
         "  -h --help\t\tDisplay this help page.\n"
         "  -p --port  <u_int>\tChoose port number.\n"
         "  -c --count <u_int>\tSpecify number of threads.\n"
-        "  -v --verbose\t\tBe more verbose.\n";
+        "  -v --verbose\t\tBe more verbose.\n"
+        "  -f --forward\t\tUse \"X-Forwarded-For\" header to determine IP.\n";
+
+/* If an error occurs, this message may be sent back to the client. */
+static char* http_request_size_error = "ERROR: Your HTTP request could not be parsed. It may be too long.";
 
 /**
  * If the argument indicates an error, the function will print to stdout and
@@ -69,12 +81,15 @@ noreturn void* handle_request(void * arg)
 {
     struct tm * time_info;
     int socket_identifier, handler, option_value = 1, error_occurred;
-    char ip[INET6_ADDRSTRLEN];
+    char ip[MESSAGE_BUFFER_SIZE];
     char datetime[CACHE_SIZE];
     struct sockaddr_in client;
     time_t current_time;
     char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nConnection: close\nContent-length: ";
+    char buffer[MESSAGE_BUFFER_SIZE];
     long result;
+    regmatch_t capture_groups[2];
+    long long ip_start, ip_end;
     unsigned long ip_length, amount_sent, amount_to_send, offset = strlen(cache);
     struct linger linger_options = {
         .l_onoff = 1,
@@ -99,11 +114,32 @@ noreturn void* handle_request(void * arg)
             /* Disable socket lingering, a.k.a. Nagle's Algorithm. */
             setsockopt(handler, SOL_SOCKET, SO_LINGER, &linger_options, sizeof(linger_options));
 
-            /* Craft and write the message. */
-            if (client.sin_family == AF_INET) {
-                inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
-            } else {
-                inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
+            /* Option A: use HTTP headers to determine the IP address. */
+            if (forward_flag) {
+                /* yip is designed to parse small requests. If it's larger than
+                 * INCOMING_MESSAGE_BUFFER_SIZE we just report an error. */
+                if (recv(handler, buffer, MESSAGE_BUFFER_SIZE, 0) > 0) {
+                    error_occurred = regexec(&header_regex, buffer, 2, capture_groups, 0);
+                } else {
+                    error_occurred = 1;
+                }
+
+                if (!error_occurred) {
+                    ip_start = capture_groups[1].rm_so;
+                    ip_end = capture_groups[1].rm_eo;
+                    strncpy(ip, &buffer[ip_start], ip_end - ip_start);
+                } else {
+                    strcpy(ip, http_request_size_error);
+                }
+            }
+
+            /* Option B: Use the TCP tuple. */
+            else {
+                if (client.sin_family == AF_INET) {
+                    inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
+                } else {
+                    inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
+                }
             }
 
             ip_length = strlen(ip);
@@ -159,12 +195,13 @@ int main(int argc, char ** argv)
     pthread_t thread_id;
 
     /* These values define which switches are legal. */
-    char options[] = "c:hp:";
+    char options[] = "vc:hp:f";
     struct option long_options[] = {
-        {"verbose", no_argument,       &verbose_flag, 1  },
-        {"port",    required_argument, NULL,         'p' },
-        {"count",   required_argument, NULL,         'c' },
-        {NULL,      0,                 NULL,          0  }
+        {"verbose",   no_argument,       &verbose_flag,  1  },
+        {"port",      required_argument, NULL,          'p' },
+        {"count",     required_argument, NULL,          'c' },
+        {"forwarded", no_argument,       &forward_flag, 'f' },
+        {NULL,        0,                 NULL,           0  }
     };
 
     /* Parse runtime arguments. */
@@ -177,6 +214,12 @@ int main(int argc, char ** argv)
             case 'c':
                 thread_count = atoi(optarg);
                 break;
+            case 'v':
+                verbose_flag = 1;
+                break;
+            case 'f':
+                forward_flag = 1;
+                break;
             case 'h':
                 printf("%s", help_message);
                 exit(-1);
@@ -187,6 +230,11 @@ int main(int argc, char ** argv)
                 printf("Unknown parameter\n");
                 exit(-1);
         }
+    }
+
+    if (forward_flag) {
+        try_or_exit(regcomp(&header_regex, REGEX_HTTP_HEADER, REG_EXTENDED));
+        printf("Basing response on header \"X-Forwarded-For\"\n");
     }
 
     if (verbose_flag) {
