@@ -8,14 +8,16 @@ RUN apk add gcc musl-dev
 COPY yip.c yip.c
 
 # Run GCC directly, skip CMake
-RUN gcc -o yip yip.c -O3 -lpthread
+RUN gcc -o yip yip.c -O3 -pthread
 
 FROM alpine:3.15.4 AS production
-ENV THREADS 1
+ENV THREADS 4
+ENV PORT 80
+ENV FLAGS ""
 EXPOSE 80/tcp
 WORKDIR /app
 
 COPY --from=build /app/yip ./yip
 RUN chmod +x ./yip
 
-ENTRYPOINT ./yip -c ${THREADS} --verbose
+ENTRYPOINT ./yip  --count ${THREADS} --port ${PORT} ${FLAGS}
