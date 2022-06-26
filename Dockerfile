@@ -5,7 +5,7 @@ WORKDIR /app
 RUN apk add gcc musl-dev
 
 # yip is a single C file.
-COPY yip.c yip.c
+COPY src/yip.c yip.c
 
 # Run GCC directly, skip CMake
 RUN gcc -o yip yip.c -O3 -pthread

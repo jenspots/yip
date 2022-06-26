@@ -13,6 +13,23 @@ OPTIONS
   -f --forward          Use "X-Forwarded-For" header to determine IP.
 ```
 
+#### Installation
+
+Assuming you have cloned the repository and navigated into it, run:
+
+```shell
+# Temporary new directory
+mkdir build
+cd build
+
+# Generate build files
+cmake ..
+
+# Build yip and install
+cmake --build .
+cmake --install .
+```
+
 ### Motivation
 
 I've grown tired of Googling "what's my IP address" since I don't like to rely on a GUI for such a trivial task, and I simply am unable to remember the domain name of that one service that works with an easy `cURL` query. Given how small the implementation would be, I figured it would be fun to try and write a C program using `pthread.h` and `socket.h`.
