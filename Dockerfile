@@ -17,7 +17,10 @@ ENV FLAGS ""
 EXPOSE 80/tcp
 WORKDIR /app
 
+RUN apk add curl
+
 COPY --from=build /app/yip ./yip
 RUN chmod +x ./yip
 
+HEALTHCHECK CMD curl --fail http://localhost:${PORT} || exit 1   
 ENTRYPOINT ./yip  --count ${THREADS} --port ${PORT} ${FLAGS}
