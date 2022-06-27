@@ -43,20 +43,25 @@ static regex_t header_regex;
 
 /* Message displayed as help page. */
 static char* help_message =
-        BOLD("yip: Lightweight, multi-threaded web server which echoes the client's "
-        "IP address.\n")
-        "Copyright (c) by Jens Pots, 2022\n"
-        "Licensed under AGPL-3.0-only\n"
-        "\n"
-        BOLD("OPTIONS\n")
-        "  -h --help\t\tDisplay this help page.\n"
-        "  -p --port  <u_int>\tChoose port number.\n"
-        "  -c --count <u_int>\tSpecify number of threads.\n"
-        "  -v --verbose\t\tBe more verbose.\n"
-        "  -f --forward\t\tUse \"X-Forwarded-For\" header to determine IP.\n";
+    BOLD(
+    "yip: Lightweight, multi-threaded web server which echoes the client's "
+    "IP address.\n"
+    )
+    "Copyright (c) by Jens Pots, 2022\n"
+    "Licensed under AGPL-3.0-only\n"
+    "\n"
+    BOLD("OPTIONS\n")
+    "  -h --help\t\tDisplay this help page.\n"
+    "  -p --port  <u_int>\tChoose port number.\n"
+    "  -c --count <u_int>\tSpecify number of threads.\n"
+    "  -v --verbose\t\tBe more verbose.\n"
+    "  -f --forward\t\tUse \"X-Forwarded-For\" header to determine IP.\n";
 
-/* If an error occurs, this message may be sent back to the client. */
-static char* http_request_size_error = "ERROR: Your HTTP request could not be parsed. It may be too long.";
+/* Generic error message for all faulty requests.. */
+char* http_internal_server_error =
+        "HTTP/1.1 500 Internal Server Error\n"
+        "Connection: close\n"
+        "Content-Length: 0\n\n";
 
 /**
  * If the argument indicates an error, the function will print to stdout and
@@ -71,6 +76,28 @@ void try_or_exit(int error)
     }
 }
 
+/***
+ * Sends a string over a socket to the client.
+ * @param handler The active socket identifier.
+ * @param message A null-terminated string to send over the socket.
+ * @return 0 if successful, 1 otherwise.
+ */
+int transmit(int handler, char * message)
+{
+    unsigned long sent = 0;
+    unsigned long total = strlen(message);
+    while (sent < total) {
+        long result = send(handler, message + sent, total - sent, 0);
+        if (result != -1) {
+            sent += result;
+        } else {
+            perror("ERROR");
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /**
  * Function that handles incoming requests until the end of time, or when the
  * program halts, whichever comes first.
@@ -79,111 +106,96 @@ void try_or_exit(int error)
  */
 noreturn void* handle_request(void * arg)
 {
-    struct tm * time_info;
-    int socket_identifier, handler, option_value = 1, error_occurred;
+    /* Some buffers. */
+    char read_buffer[MESSAGE_BUFFER_SIZE];
     char ip[MESSAGE_BUFFER_SIZE];
-    char datetime[CACHE_SIZE];
-    struct sockaddr_in client;
-    time_t current_time;
-    char cache[CACHE_SIZE] = "HTTP/1.1 200 OK\nConnection: close\nContent-length: ";
-    char buffer[MESSAGE_BUFFER_SIZE];
-    long result;
-    regmatch_t capture_groups[2];
-    long long ip_start, ip_end;
-    unsigned long ip_length, amount_sent, amount_to_send, offset = strlen(cache);
-    struct linger linger_options = {
-        .l_onoff = 1,
-        .l_linger = 0
-    };
+
+    /* The thread continues to reuse this single array to construct a reply. */
+    char http_message[CACHE_SIZE] =
+        "HTTP/1.1 200 OK\n"
+         "Connection: close\n"
+         "Content-length: ";
+
+    /* This is where the IP needs to be written to inside the message. */
+    char * http_message_ip = http_message + strlen(http_message);
 
     /* The void pointer contains the original socket number. */
-    socket_identifier = * (int*) arg;
+    int socket_id = * (int*) arg;
 
     /* Required by `accept`. */
+    struct sockaddr_in client;
     socklen_t address_len = sizeof(client);
 
     /* Respond with the address and close the handling socket. */
     while (1) {
-        handler = accept(socket_identifier, (struct sockaddr *) &client, &address_len);
-        if (handler > 0) {
-            error_occurred = 0;
-
-            /* Disable TCP_WAIT. */
-            setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, &option_value, sizeof(int));
-
-            /* Disable socket lingering, a.k.a. Nagle's Algorithm. */
-            setsockopt(handler, SOL_SOCKET, SO_LINGER, &linger_options, sizeof(linger_options));
-
-            /* Option A: use HTTP headers to determine the IP address. */
-            if (forward_flag) {
-                /* yip is designed to parse small requests. If it's larger than
-                 * INCOMING_MESSAGE_BUFFER_SIZE we just report an error. */
-                if (recv(handler, buffer, MESSAGE_BUFFER_SIZE, 0) > 0) {
-                    error_occurred = regexec(&header_regex, buffer, 2, capture_groups, 0);
-                } else {
-                    error_occurred = 1;
-                }
-
-                if (!error_occurred) {
-                    ip_start = capture_groups[1].rm_so;
-                    ip_end = capture_groups[1].rm_eo;
-                    strncpy(ip, &buffer[ip_start], ip_end - ip_start);
-                } else {
-                    strcpy(ip, http_request_size_error);
-                }
-            }
-
-            /* Option B: Use the TCP tuple. */
-            else {
-                if (client.sin_family == AF_INET) {
-                    inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
-                } else {
-                    inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
-                }
-            }
-
-            ip_length = strlen(ip);
-            sprintf(cache + offset, "%lu", ip_length);
-
-            /* If the IP address length contains two digits, we must move everything
-             * with one character to the right. This is represented using "shift" */
-            int shift = ip_length < 10 ? 0 : 1;
-            *(cache + offset + 1 + shift) = '\n';
-            *(cache + offset + 2 + shift) = '\n';
-            strcpy(cache + offset + 3 + shift, ip);
-            *(cache + offset + 3 + shift + ip_length) = '\0';
-
-            /* Write data to the socket. */
-            amount_sent = 0;
-            amount_to_send = strlen(cache);
-            while (amount_sent < amount_to_send) {
-                result = send(handler, cache + amount_sent, amount_to_send - amount_sent, 0);
-                if (result != -1) {
-                    amount_sent += result;
-                } else {
-                    error_occurred = 1;
-                    perror("ERROR");
-                    break;
-                }
-            }
-
-            /* Close the TCP connection and corresponding socket. */
-            result = close(handler); // TODO: this may block
-            if (result == -1) {
-                error_occurred = 1;
-                perror("ERROR");
-            }
-
-            /* Log IP address and time to stdout, if desired. */
-            if (verbose_flag) {
-                time(&current_time);
-                time_info = localtime(&current_time);
-                strftime(datetime, 80, "%FT%T%z", time_info); // ISO 8601
-                printf("%s\t%s\t%s\n", datetime, error_occurred ? "ERROR" : "OK\t", ip);
-            }
-
-        } else {
+        /* Attempt to accept an incoming connection. */
+        int handler = accept(socket_id, (struct sockaddr *) &client, &address_len);
+        if (handler == 0) {
             perror("ERROR");
+            continue;
+        }
+
+        /* Disable TCP_WAIT. */
+        int opt_value = 1;
+        setsockopt(handler, IPPROTO_TCP, TCP_NODELAY, &opt_value, sizeof(int));
+
+        /* Disable socket lingering, a.k.a. Nagle's Algorithm. */
+        struct linger linger_opt = { .l_onoff = 1, .l_linger = 0 };
+        setsockopt(handler, SOL_SOCKET, SO_LINGER, &linger_opt, sizeof(linger_opt));
+
+        /* Option A: use HTTP headers to determine the IP address. */
+        ip[0] = '\0';
+        if (forward_flag) {
+            if (recv(handler, read_buffer, MESSAGE_BUFFER_SIZE, 0) > 0) {
+                regmatch_t captured[2];
+                if (regexec(&header_regex, read_buffer, 2, captured, 0) == 0) {
+                    long long ip_start = captured[1].rm_so;
+                    long long ip_end = captured[1].rm_eo;
+                    strncpy(ip, &read_buffer[ip_start], ip_end - ip_start);
+                }
+            }
+        }
+
+        /* Option B: Use the TCP tuple. */
+        else {
+            if (client.sin_family == AF_INET) {
+                inet_ntop(AF_INET, &client.sin_addr, ip, INET_ADDRSTRLEN);
+            } else {
+                inet_ntop(AF_INET6, &client.sin_addr, ip, INET6_ADDRSTRLEN);
+            }
+        }
+
+        /* When an IP address was found, strlen will return greater than 0. */
+        if (strlen(ip) > 0) {
+            /* If the IP address length contains two digits, we must move
+             * everything one character to the right with "shift". */
+            unsigned long ip_length = strlen(ip);
+            sprintf(http_message_ip, "%lu", ip_length);
+            int shift = ip_length < 10 ? 0 : 1;
+            *(http_message_ip + 1 + shift) = '\n';
+            *(http_message_ip + 2 + shift) = '\n';
+            strcpy(http_message_ip + 3 + shift, ip);
+            *(http_message_ip + 3 + shift + ip_length) = '\0';
+            transmit(handler, http_message);
+        } else {
+            transmit(handler, http_internal_server_error);
+        }
+
+        /* Close the TCP connection and corresponding socket. */
+        if (close(handler) != 0) {
+            perror("ERROR");
+        }
+
+        /* Log IP address and time to stdout, if desired. */
+        if (verbose_flag) {
+            char datetime[CACHE_SIZE];
+            time_t current_time = time(NULL);
+            struct tm * time_info = localtime(&current_time);
+            strftime(datetime, 80, "%FT%T%z", time_info); // ISO 8601
+            printf("%s\t", datetime);
+            printf("%s\t", strlen(ip) > 0 ? "OK\t" : "Error");
+            printf("%s\n", strlen(ip) > 0 ? ip : "Unknown");
+            fflush(stdout);
         }
     }
 }
@@ -232,13 +244,14 @@ int main(int argc, char ** argv)
         }
     }
 
-    if (forward_flag) {
+    if (verbose_flag && forward_flag) {
         try_or_exit(regcomp(&header_regex, REGEX_HTTP_HEADER, REG_EXTENDED));
         printf("Basing response on header \"X-Forwarded-For\"\n");
     }
 
     if (verbose_flag) {
         printf("Listening on port: %d\nThread count: %d\n\n", port, thread_count);
+        printf("TIME\t\t\t\t\t\tSTATUS\tIP\n");
     }
 
     /* Configure the socket. */
