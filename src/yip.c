@@ -225,6 +225,11 @@ int main(int argc, char ** argv)
                 break;
             case 'c':
                 thread_count = atoi(optarg);
+                if (thread_count <= 0) {
+                    errno = EINVAL;
+                    perror("ERROR");
+                    exit(errno);
+                }
                 break;
             case 'v':
                 verbose_flag = 1;
@@ -237,6 +242,11 @@ int main(int argc, char ** argv)
                 exit(-1);
             case 'p':
                 port = atoi(optarg);
+                if (port <= 0) {
+                    errno = EINVAL;
+                    perror("ERROR");
+                    exit(errno);
+                }
                 break;
             case '?':
                 printf("Unknown parameter\n");
