@@ -23,6 +23,25 @@ The development version of yip can be found in the Arch User Repositories.
 $ yay -S yip-git
 ```
 
+#### Docker
+
+The following compose file can be used a starting point. The image is based on Alpine Linux and lightweight.
+
+```yaml
+version: "3.9"
+
+services:
+  yip:
+    container_name: "yip"
+    image: "ghcr.io/jenspots/yip:latest"
+    ports:
+      - "80:80"
+    environment:
+      - "THREADS=4"
+      - "PORT=80" # Make sure this matches the port section
+      - "FLAGS=--verbose" # See help page
+```
+
 #### Manual
 
 Assuming you have cloned the repository and navigated into it, run:
