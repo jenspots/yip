@@ -2,25 +2,28 @@ FROM alpine:3.15.4 AS build
 WORKDIR /app
 
 # Install dependencies
-RUN apk add gcc musl-dev
+RUN apk add gcc musl-dev cmake make
 
-# yip is a single C file.
-COPY src/yip.c yip.c
+COPY ./CMakeLists.txt ./CMakeLists.txt
+COPY ./src/yip.c ./src/yip.c
 
 # Run GCC directly, skip CMake
-RUN gcc -o yip yip.c -O3 -pthread
+WORKDIR /app/build
+RUN cmake -DCMAKE_BUILD_TYPE=Release ..
+RUN cmake --build .
 
 FROM alpine:3.15.4 AS production
+WORKDIR /app
+
 ENV THREADS 4
 ENV PORT 80
 ENV FLAGS ""
-EXPOSE 80/tcp
-WORKDIR /app
+
+EXPOSE ${PORT}/tcp
 
 RUN apk add curl
-
-COPY --from=build /app/yip ./yip
+COPY --from=build /app/build/yip ./yip
 RUN chmod +x ./yip
 
-HEALTHCHECK CMD curl --fail http://localhost:${PORT} || exit 1   
+HEALTHCHECK CMD curl --fail http://localhost:${PORT} -H "X-Forwarded-For: 0.0.0.0" || exit 1
 ENTRYPOINT ./yip  --count ${THREADS} --port ${PORT} ${FLAGS}

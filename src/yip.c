@@ -279,6 +279,9 @@ int main(int argc, char ** argv)
     /* Set the program to start listening. */
     try_or_exit(listen(socket_identifier, BACKLOG_SIZE));
 
+    /* TODO: Some Docker IO weirdness. */
+    fflush(stdout);
+
     /* Spawn worker threads. The current thread is the zeroth, so i = 1. */
     for (int i = 1; i < thread_count; ++i) {
         try_or_exit(pthread_create(&thread_id, NULL, handle_request, &socket_identifier));
